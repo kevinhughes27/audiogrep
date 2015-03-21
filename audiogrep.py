@@ -13,17 +13,50 @@ import subprocess
 import argparse
 import re
 import random
+import math
 from pydub import AudioSegment
 
 
-def convert_to_wav(files):
-    '''Converts files to a format that pocketsphinx can deal wtih (16khz mono 16bit wav)'''
-    converted = []
+def prepare_files(files):
+    '''Splits files into chunks and converts them to a format that pocketsphinx can deal wtih (16khz mono 16bit wav)'''
+    prepared = []
     for f in files:
-        new_name = f + '.temp.wav'
-        subprocess.call(['ffmpeg', '-i', f, '-acodec', 'pcm_s16le', '-ac', '1', '-ar', '16000', new_name])
+        converted = split_and_convert_to_wav(f)
+        prepared += converted
+    return prepared
+
+
+def split_and_convert_to_wav(f):
+    length = clip_length(f)
+    split_length = 60
+    split_count = int(math.ceil(length/float(split_length)))
+
+    converted = []
+    for n in range(0, split_count):
+        split_start = split_length * n
+        new_name = f + '.temp.' + str(n) + '.wav'
+        subprocess.call(['ffmpeg', '-i', f, '-ss', str(split_start), '-t', str(split_length), '-acodec', 'pcm_s16le', '-ac', '1', '-ar', '16000', new_name])
         converted.append(new_name)
+
     return converted
+
+
+def clip_length(f):
+    '''Uses ffmpeg to find the length of the clip'''
+    output = subprocess.Popen("ffmpeg -i '"+ f +"' 2>&1 | grep 'Duration'", shell = True, stdout = subprocess.PIPE).stdout.read()
+
+    length_regexp = 'Duration: (\d{2}):(\d{2}):(\d{2})\.\d+,'
+    re_length = re.compile(length_regexp)
+
+    matches = re_length.search(output)
+
+    if matches:
+        length = int(matches.group(1)) * 3600 + \
+                       int(matches.group(2)) * 60 + \
+                       int(matches.group(3))
+        return length
+    else:
+        raise SystemExit("Can't determine video length.")
 
 
 def transcribe(files=[], pre=10, post=50):
@@ -218,8 +251,9 @@ if __name__ == '__main__':
             if e.errno == os.errno.ENOENT:
                 print 'Error: Please install pocketsphinx to transcribe files.'
                 sys.exit()
-        files = convert_to_wav(args.inputfile)
+        files = prepare_files(args.inputfile)
         transcribe(files)
+        print text(files)
 
     if args.search:
         if args.outputmode == 'franken':
